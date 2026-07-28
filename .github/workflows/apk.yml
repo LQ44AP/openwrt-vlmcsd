@@ -58,7 +58,7 @@ jobs:
 
           # 2. 更新并安装 feeds
           ./scripts/feeds update -a
-          ./scripts/feeds install alsa-lib bluez-daemon glib2 sbc fdk-aac dbus mpg123 libspandsp
+          ./scripts/feeds install libpthread
           ./scripts/feeds install -a || echo "Ignore core merging warnings"
 
       - name: Add Package to SDK
@@ -67,7 +67,7 @@ jobs:
           cp Makefile sdk/package/vlmcsd/
           [ -d files ] && cp -r files sdk/package/vlmcsd/
           # 强制修复 CRLF 换行符
-          find sdk/package/bluez-alsa/ -type f -exec sed -i 's/\r$//' {} +
+          find sdk/package/vlmcsd/ -type f -exec sed -i 's/\r$//' {} +
 
       - name: Build Package
         run: |
