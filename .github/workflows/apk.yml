@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses5-dev gawk git gettext \
-            libssl-dev xsltproc wget zip unzip rsync python3 \
+            libssl-dev xsltproc wget zip unzip rsync python3 python3-pyelftools python3-setuptools \
             libglib2.0-dev-bin libtool pkg-config zlib1g-dev zstd
 
       - name: Setup SDK
