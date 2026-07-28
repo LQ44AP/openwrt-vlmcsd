@@ -1,0 +1,130 @@
+name: Build vlmcsd (APK)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build for ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 注意：若需纯 apk 产物，SDK 需选用新版 (如 25.12 / SNAPSHOT)
+          # 这里以最新架构的 SDK URL 为例
+          - arch: mipsel_24kc
+            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/ramips/mt7621/openwrt-sdk-25.12.5-ramips-mt7621_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
+          - arch: mips_24kc
+            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/ath79/generic/openwrt-sdk-25.12.5-ath79-generic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
+          - arch: x86_64
+            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
+          - arch: aarch64_generic
+            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8/openwrt-sdk-25.12.5-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev gawk git gettext \
+            libssl-dev xsltproc wget zip unzip rsync python3 \
+            libglib2.0-dev-bin libtool pkg-config zlib1g-dev zstd
+
+      - name: Setup SDK
+        run: |
+          wget -qO sdk.tar.xz "${{ matrix.sdk_url }}"
+          mkdir sdk && tar -I zstd -xvf sdk.tar.xz -C sdk --strip-components=1
+          cd sdk
+
+          # 1. 替换默认源
+          # cat > feeds.conf.default <<EOF
+          # src-git base https://github.com/openwrt/openwrt.git;v23.05.6
+          # src-git packages https://github.com/openwrt/packages.git;openwrt-23.05
+          # src-git routing https://github.com/openwrt/routing.git;openwrt-23.05
+          # src-git telephony https://github.com/openwrt/telephony.git;openwrt-23.05
+          # EOF
+
+          # 2. 更新并安装 feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install alsa-lib bluez-daemon glib2 sbc fdk-aac dbus mpg123 libspandsp
+          ./scripts/feeds install -a || echo "Ignore core merging warnings"
+
+      - name: Add Package to SDK
+        run: |
+          mkdir -p sdk/package/vlmcsd
+          cp Makefile sdk/package/vlmcsd/
+          [ -d files ] && cp -r files sdk/package/vlmcsd/
+          # 强制修复 CRLF 换行符
+          find sdk/package/bluez-alsa/ -type f -exec sed -i 's/\r$//' {} +
+
+      - name: Build Package
+        run: |
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          make defconfig
+                    
+          # 编译 vlmcsd，失败时自动退回单线程输出 log
+          make package/vlmcsd/compile V=s -j$(nproc) || make package/vlmcsd/compile V=s -j1
+
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          echo "正在精准搜寻编译出的 .apk 产物..."
+
+          # 1. 查找生成的 .apk 文件 (同时兼容旧版 .ipk 避免 SDK 版本混淆导致的找不到文件)
+          find sdk/bin/packages/ -type f \( -name "vlmcsd*.apk" -o -name "vlmcsd*.ipk" \) -exec cp -t output/ {} +
+
+          cd output
+          shopt -s nullglob
+          pkg_files=(*.*)
+
+          if [ ${#pkg_files[@]} -eq 0 ]; then
+            echo "::error::未找到编译出的 APK / IPK 包！请检查构建日志。"
+            exit 1
+          fi
+
+          # 2. 重命名以附加架构后缀
+          for f in "${pkg_files[@]}"; do
+            ext="${f##*.}"
+            base="${f%.*}"
+            if [[ "$f" != *"${{ matrix.arch }}"* ]]; then
+              new_name="${base}_${{ matrix.arch }}.${ext}"
+              echo "重命名: $f -> $new_name"
+              mv "$f" "$new_name"
+            else
+              echo "跳过已处理文件: $f"
+            fi
+          done
+
+          echo "最终待发布列表："
+          ls -lh .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlmcsd-${{ matrix.arch }}
+          path: output/*
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: output/*
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
