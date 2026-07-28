@@ -72,8 +72,8 @@ jobs:
       - name: Build Package
         run: |
           cd sdk
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # ./scripts/feeds update -a
+          ./scripts/feeds install libpthread
 
           make defconfig
                     
